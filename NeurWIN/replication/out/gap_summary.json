@@ -1,0 +1,40 @@
+{
+  "A_closedform_tie_by_arm_id": {
+    "mean": -105.0501859821057,
+    "diff_vs_A": 0.0,
+    "paired_se": 0.0,
+    "runs_better_than_A": 0
+  },
+  "B_closedform_tie_by_least_slack": {
+    "mean": -105.09455778056729,
+    "diff_vs_A": -0.044371798461612,
+    "paired_se": 0.07528077244755571,
+    "runs_better_than_A": 25
+  },
+  "C_closedform_tie_random": {
+    "mean": -105.15821045922694,
+    "diff_vs_A": -0.10802447712127361,
+    "paired_se": 0.10532977904352382,
+    "runs_better_than_A": 20
+  },
+  "D_neurwin_2000": {
+    "mean": -99.25011116850743,
+    "diff_vs_A": 5.80007481359824,
+    "paired_se": 0.3452639870914779,
+    "runs_better_than_A": 50
+  },
+  "D_minus_B": {
+    "mean": 5.844446612059851,
+    "paired_se": 0.3479815199609721
+  },
+  "index_corr": {
+    "pearson": 0.7651567478842796,
+    "spearman": 0.7847062424039005
+  },
+  "tie_region": {
+    "n_states": 63,
+    "spearman_neurwin_vs_minus_slack": 0.7512926214868798,
+    "spearman_neurwin_vs_B": 0.9046746476826466,
+    "spearman_neurwin_vs_minus_T": -0.027623362381686993
+  }
+}

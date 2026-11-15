@@ -1,0 +1,4 @@
+training time: 146.01877 seconds
+training episodes: 2000
+Mini-batch size: 5
+Total timesteps: 600000
