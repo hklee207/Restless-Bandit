@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NeurWIN vs Whittle Index</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>EV charging as a restless bandit: Whittle index vs NeurWIN</h1>
+    <p class="intro">
+      A charging station has <b>N spots</b> but only enough power to charge <b>M cars per round</b>.
+      When a car arrives at an empty spot it announces how many rounds until it leaves (<b>T</b>)
+      and how many units of charge it needs (<b>B</b>).
+      The station earns <b>1 &minus; c = 0.5</b> for each unit it charges, and pays
+      <b>0.2 &times; B&sup2;</b> for the charge still missing when a car leaves.
+      Each spot is one &ldquo;arm&rdquo;: every round the station scores each spot with an index and charges the top M.
+      Below, two copies of the same station see exactly the same cars arrive. Only the index differs.
+    </p>
+  </header>
+
+  <div id="fatal" class="fatal" hidden></div>
+
+  <section class="controls" aria-label="Controls">
+    <label>Spots N <b id="Nval">4</b><input id="N" type="range" min="1" max="20" value="4"></label>
+    <label>Chargers M <b id="Mval">1</b><input id="M" type="range" min="1" max="4" value="1"></label>
+    <label>Seed<input id="seed" type="number" min="0" step="1" value="1"></label>
+    <label>Speed <b id="speedVal">4</b> rounds/s<input id="speed" type="range" min="1" max="10" value="4"></label>
+    <div class="buttons">
+      <button id="play" class="primary" type="button">Play</button>
+      <button id="step" type="button">Step</button>
+      <button id="reset" type="button">Reset</button>
+    </div>
+    <span class="hint">Episode length <b id="episodeLen">300</b> rounds</span>
+  </section>
+
+  <div id="differ" class="differ"></div>
+
+  <section class="stations">
+    <article class="station s-index">
+      <h2><i class="dot"></i>Whittle index (closed form)</h2>
+      <div id="spotsIndex"></div>
+      <div id="statsIndex" class="stats"></div>
+      <p id="whyIndex" class="why"></p>
+    </article>
+    <article class="station s-neur">
+      <h2><i class="dot"></i><span id="neurTitle">NeurWIN (trained net)</span></h2>
+      <div id="spotsNeur"></div>
+      <div id="statsNeur" class="stats"></div>
+      <p id="whyNeur" class="why"></p>
+    </article>
+  </section>
+  <p class="legend">
+    Highlighted spot = being charged this round. Bar = charge still needed (B).
+    <span class="risk-key">Red</span> = the car cannot afford to wait (B &ge; T).
+    Totals cover the rounds already played.
+  </p>
+
+  <section class="panel">
+    <h3>Cumulative net reward in this episode</h3>
+    <svg id="live" viewBox="0 0 900 230" role="img" aria-label="Cumulative net reward, both stations"></svg>
+  </section>
+
+  <section class="panel">
+    <h3>Training: NeurWIN&rsquo;s test reward as it learns (N = 4, M = 1)</h3>
+    <svg id="training" viewBox="0 0 900 300" role="img" aria-label="NeurWIN reward against training episodes"></svg>
+    <div class="ckpt">
+      <input id="ckptRange" type="range" min="0" max="2000" step="10" value="2000" aria-label="Checkpoint">
+      <p id="ckptLabel"></p>
+      <p class="hint">Click or drag on the chart to choose which checkpoint runs the NeurWIN station. 0 = untrained.</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h3>Many episodes</h3>
+    <button id="batch" class="primary" type="button">Run 50 episodes</button>
+    <p id="batchOut" class="batch-out"></p>
+  </section>
+
+  <section class="panel">
+    <h3>Larger stations (same trained net, M = N / 4, 50 test runs)</h3>
+    <table>
+      <thead><tr><th>N</th><th>M</th><th>NeurWIN</th><th>Index</th><th>NeurWIN &minus; index</th><th>% of index</th><th>NeurWIN better in</th></tr></thead>
+      <tbody id="scaleBody"></tbody>
+    </table>
+    <p class="caption">NeurWIN&rsquo;s edge shrinks as N grows and flips at N = 100.</p>
+  </section>
+</main>
+<script src="data.js"></script>
+<script src="sim.js"></script>
+</body>
+</html>
