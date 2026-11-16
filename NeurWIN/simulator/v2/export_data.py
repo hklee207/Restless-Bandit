@@ -68,8 +68,29 @@ for seeds in seed_list:
     trace.append(dict(draws=d, closed=dict(rewards=r_cf, picks=p_cf), neurwin=dict(rewards=r_nw, picks=p_nw)))
     print("run total cf %.4f nw %.4f" % (sum(BETA**t*x for t, x in enumerate(r_cf)), sum(BETA**t*x for t, x in enumerate(r_nw))))
 
+# ---- Algorithm 1 trace: replication/algorithm1.py (paper notation), mini-batches 1, 2, 50, 200, 400
+sys.path.insert(0, REPO + "/replication")
+import algorithm1
+
+theta_plus, records = algorithm1.train(2000, trace=True)
+assert algorithm1.max_difference(theta_plus, 2000) == 0, "algorithm1.py no longer reproduces the checkpoint"
+
+
+def r6(x):
+    if isinstance(x, float):
+        return round(x, 6)
+    if isinstance(x, (list, tuple)):
+        return [r6(v) for v in x]
+    if isinstance(x, dict):
+        return {k: r6(v) for k, v in x.items()}
+    return x
+
+
+alg1 = [r6(records[b - 1]) for b in (1, 2, 50, 200, 400)]
+print("algorithm1: lam", [a["lam"] for a in alg1], "G_bar_b", [a["G_bar_b"] for a in alg1])
+
 data = dict(ckpts=ckpts, tables={str(k): [[round(v, 6) for v in row] for row in t] for k, t in tables.items()},
-            closed=closed, curve=curve, indexMean=round(idx_mean, 4), scale=scale)
+            closed=closed, curve=curve, indexMean=round(idx_mean, 4), scale=scale, alg1=alg1)
 json.dump(data, open(OUT, "w"), separators=(",", ":"))
 json.dump(trace, open(OUT.replace(".json", "_trace.json"), "w"), separators=(",", ":"))
 print("ok", len(json.dumps(data)) // 1024, "KB")

@@ -139,7 +139,44 @@ svg text { font-family: var(--font-ui); }
 .notes { font-family: var(--font-ui); font-size: 13.5px; color: var(--muted); }
 .notes li { margin-bottom: 6px; }
 footer { border-top: 1px solid var(--rule); margin-top: 80px; padding: 28px 0 60px; font-family: var(--font-ui); font-size: 13px; color: var(--muted); }
+/* Algorithm 1 */
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; border-right: 1px solid var(--rule); padding: 6px 12px; font-family: var(--font-mono); }
+.seg button:last-child { border-right: 0; }
+.seg button.on { background: var(--ink); color: var(--bg); }
+.alg { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.alg-code { font-family: var(--font-mono); font-size: 13px; line-height: 1.5; background: var(--bg); border: 1px solid var(--rule); border-radius: 10px; padding: 10px 0; overflow-x: auto; }
+.alg-code .ln { display: grid; grid-template-columns: 56px 1fr; padding: 3px 12px 3px 0; border-left: 3px solid transparent; color: var(--muted); }
+.alg-code .ln .no { text-align: right; padding-right: 14px; font-size: 11.5px; }
+.alg-code .ln.step { color: var(--ink); cursor: pointer; }
+.alg-code .ln.step:hover { background: var(--soft); }
+.alg-code .ln.cur { background: var(--blue-soft); border-left-color: var(--blue); }
+.alg-code .ln.cur .no { color: var(--blue); font-weight: 500; }
+.alg-code .rule { border-top: 1px solid var(--rule); margin: 6px 0; }
+.alg-side h4 { margin: 0 0 4px; font-size: 16px; font-weight: 600; display: flex; gap: 10px; align-items: baseline; }
+.alg-side h4 .mono { color: var(--blue); font-size: 14px; }
+.alg-side .fn { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
+.alg-side .fn code { font-family: var(--font-mono); color: var(--ink); background: var(--soft); padding: 1px 6px; border-radius: 4px; }
+.alg-side table.data { font-size: 13px; margin: 0 0 6px; }
+.alg-side table.data td, .alg-side table.data th { padding: 5px 10px 5px 0; }
+.alg-side .kv { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 0 0 10px; }
+.alg-side .kv div span { display: block; font-size: 12px; color: var(--muted); }
+.alg-side .kv div strong { font-family: var(--font-mono); font-weight: 500; font-size: 18px; }
+.alg-plain { background: var(--soft); border-radius: 8px; padding: 12px 14px; font-size: 14px; margin: 12px 0 0; }
+.bars { display: grid; grid-template-columns: 34px 1fr 64px; gap: 4px 10px; align-items: center; font-size: 13px; margin: 4px 0 8px; }
+.bars .track2 { position: relative; height: 14px; }
+.bars .track2 i { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
+.bars .track2 .zero { position: absolute; left: 50%; top: -3px; bottom: -3px; border-left: 1px solid var(--ink); }
+.bars .v { font-family: var(--font-mono); text-align: right; }
+#algTbl tr.cur td { background: var(--blue-soft); }
+#algTbl td, #algTbl th { white-space: nowrap; }
+.io { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: 12px; align-items: stretch; margin: 0 0 8px; font-family: var(--font-ui); font-size: 14px; line-height: 1.45; }
+.io-box { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; }
+.io-k { font-size: 12px; font-weight: 600; color: var(--blue); margin-bottom: 4px; }
+.io-arrow { align-self: center; font-size: 22px; color: var(--muted); }
 @media (max-width: 900px) {
+  .alg, .io { grid-template-columns: 1fr; }
+  .io-arrow { transform: rotate(90deg); justify-self: center; }
   .f1, .stations, .hm-wrap { grid-template-columns: 1fr; }
   .toc { columns: 1; }
 }
@@ -175,7 +212,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 80px; padding: 28px 0 60
   <ol class="toc" aria-label="Contents">
     <li><a href="#context"><span>01</span>Why this example</a></li>
     <li><a href="#problem"><span>02</span>The charging problem</a></li>
-    <li><a href="#learning"><span>03</span>How NeurWIN learns the score</a></li>
+    <li><a href="#algorithm1"><span>03</span>Algorithm 1, step by step</a></li>
     <li><a href="#simulation"><span>04</span>Watch both policies run</a></li>
     <li><a href="#results"><span>05</span>Results</a></li>
     <li><a href="#agents"><span>06</span>What this means for monitoring AI agents</a></li>
@@ -194,8 +231,8 @@ footer { border-top: 1px solid var(--rule); margin-top: 80px; padding: 28px 0 60
 
 <section id="problem" class="col">
   <h2><span class="num">02</span>The charging problem</h2>
-  <p>A station has <b>N</b> charging spots but enough power for only <b>M</b> cars per round. When a spot is free, a new car may pull in (70% chance each round). On arrival it announces how many rounds until it leaves, <b>T</b> (1 to 12), and how many units of charge it needs, <b>B</b> (1 to 9).</p>
-  <p>The station earns <span class="mono">1 − c = 0.5</span> for every unit it delivers. If a car leaves before it is full, the station pays a penalty of <span class="mono">0.2 × B²</span> on the charge still missing. Because the penalty grows with the square, a car that is 3 units short costs 1.8, nine times as much as a car that is 1 unit short. Each spot is one arm, and its state is the pair (T, B).</p>
+  <p>A station has <b>N</b> charging spots but enough power for only <b>M</b> cars per round. When a spot is free, a new car may pull in (70% chance each round). On arrival it announces how many rounds until it leaves, <b>D</b> (1 to 12), and how many units of charge it needs, <b>B</b> (1 to 9).</p>
+  <p>The station earns <span class="mono">1 − c = 0.5</span> for every unit it delivers. If a car leaves before it is full, the station pays a penalty of <span class="mono">0.2 × B²</span> on the charge still missing. Because the penalty grows with the square, a car that is 3 units short costs 1.8, nine times as much as a car that is 1 unit short. Each spot is one <b>arm</b>, and its state is the pair (D, B). Activating an arm for a round charges one unit; the reward is r = 1 − c = 0.5 per unit, and a vehicle that leaves B units short costs F(B) = 0.2 B².</p>
   <p>Try one spot below. The exact index has three regimes, and each has a plain reason behind it.</p>
 </section>
 
@@ -204,10 +241,10 @@ footer { border-top: 1px solid var(--rule); margin-top: 80px; padding: 28px 0 60
     <div class="f1">
       <div>
         <div class="ctl" style="margin-bottom:16px">
-          <label for="f1T">Rounds until it leaves, T <input type="range" id="f1T" min="1" max="12" value="2"><output id="f1Tv">2</output></label>
+          <label for="f1T">Rounds until it leaves, D <input type="range" id="f1T" min="1" max="12" value="2"><output id="f1Tv">2</output></label>
           <label for="f1B">Charge still needed, B <input type="range" id="f1B" min="0" max="9" value="4"><output id="f1Bv">4</output></label>
         </div>
-        <svg id="f1svg" viewBox="0 0 560 120" width="100%" role="img" aria-label="One charging spot with a car T rounds from leaving and B units still needed"></svg>
+        <svg id="f1svg" viewBox="0 0 560 120" width="100%" role="img" aria-label="One charging spot with a car D rounds from leaving and B units still needed"></svg>
       </div>
       <div>
         <div class="vals">
@@ -222,19 +259,44 @@ footer { border-top: 1px solid var(--rule); margin-top: 80px; padding: 28px 0 60
   <figcaption><b>Figure 1. One spot, up close.</b> The car moves one cell toward the exit each round. Dark blocks are charge still needed. The exact index comes from the closed-form formula in the authors' code (β = 0.99). NeurWIN's number is on a different scale; only the order between spots decides who gets charged.</figcaption>
 </figure>
 
-<section id="learning" class="col">
-  <h2><span class="num">03</span>How NeurWIN learns the score</h2>
-  <p>The network takes a state (T, B) and outputs one number. It never sees the full station during training. It practices on a single spot and learns from a made-up price instead of from competition with other cars.</p>
-  <ol class="steps">
-    <li><b>Pick a price λ.</b> The price is the network's own score for a random state. It stays fixed for 5 episodes.</li>
-    <li><b>Run one spot for 300 rounds.</b> All 5 episodes see the same arriving cars, so differences in reward come from the choices, not from luck.</li>
-    <li><b>Charge with a probability, not a hard rule.</b> P(charge) = sigmoid(f(T, B) − λ). A hard cutoff gives no gradient; a smooth probability lets small changes in the score improve the reward a little at a time.</li>
-    <li><b>Score the episode.</b> Charging reward minus λ every time it charges.</li>
-    <li><b>Update every 5 episodes.</b> REINFORCE makes the choices from better-than-average episodes more likely.</li>
-  </ol>
-  <p>Why does this produce the Whittle index? The index of a state is exactly the price at which charging and waiting are equally good. A network that acts well at every price must have learned where that break-even point sits, state by state. At test time the same network scores every spot, and the top M charge.</p>
+<section id="algorithm1" class="col">
+  <h2><span class="num">03</span>Algorithm 1, step by step</h2>
+  <p>NeurWIN's network f<sub>θ</sub> takes an arm's state (D, B) and outputs one number. It never sees the full station during training. Algorithm 1 trains it on a <b>single arm</b> that pays an <b>activation cost λ</b> every round it is activated, instead of competing with other vehicles for the chargers.</p>
+  <p>Why does this produce the Whittle index? In Env(λ), the arm earns its reward minus λ each time it is activated. A state's Whittle index is the activation cost at which activating and staying passive are equally good. f<sub>θ</sub> is <b>Whittle-accurate</b> (Def. 4) if, for every λ, activating is optimal in Env(λ) exactly when f<sub>θ</sub>(s) &gt; λ. A hard "activate iff f<sub>θ</sub>(s) &gt; λ" rule has no gradient. So training plays Env*(λ), where the arm is activated with probability σ<sub>m</sub>(f<sub>θ</sub>(s) − λ) (Sec. 4.2). By Thm. 1, a θ that does well in Env*(λ) for every λ gives a Whittle-accurate f<sub>θ</sub> as the sensitivity m grows.</p>
+  <p>Below are the real values at each line of Algorithm 1, taken from the replication's own training run (2,000 episodes = 400 mini-batches of R = 5). Step through the lines, then switch mini-batches to watch λ, G<sub>e</sub>, Ḡ<sub>b</sub> and the offset net rewards change as θ⁺ is learned.</p>
+</section>
+
+<figure class="wide" id="figAlg">
+  <div class="panel">
+    <div class="ctl" style="margin-bottom:16px">
+      <span>Mini-batch b</span>
+      <span class="seg" id="algMb" role="group" aria-label="Mini-batch"></span>
+      <span id="algMbInfo" style="color:var(--muted)"></span>
+      <span class="spacer"></span>
+      <span style="display:flex;gap:8px"><button id="algPrev">← Previous line</button><button id="algNext" class="primary">Next line →</button></span>
+    </div>
+    <div class="alg">
+      <div class="alg-code" id="algCode" aria-label="Algorithm 1 in the paper's notation"></div>
+      <div class="alg-side" id="algSide" aria-live="polite"></div>
+    </div>
+    <div class="tablewrap" style="margin-top:18px"><table class="data" id="algTbl"></table></div>
+  </div>
+  <figcaption><b>Algorithm 1, line by line.</b> Left: Algorithm 1 of the paper, restated in its notation; the highlighted line is the current step (click a line to jump to it). Right: the values at that line in the chosen mini-batch, the function in the authors' code that does the same thing, and what it means for the charging spot. Values come from <span class="mono">replication/algorithm1.py</span>, which reproduces the authors' saved checkpoints exactly (max difference 0 after 10 and 2,000 episodes). The table compares the five mini-batches shown.</figcaption>
+</figure>
+
+<div class="wide">
+  <div class="io" aria-label="Algorithm 1: inputs, output, use">
+    <div class="io-box"><div class="io-k">Inputs</div><div>θ (random initial weights, seed 50), β = 0.99, L = 0.001, m = 1, R = 5</div></div>
+    <div class="io-arrow" aria-hidden="true">→</div>
+    <div class="io-box"><div class="io-k">Output θ⁺</div><div>f<sub>θ⁺</sub>(D, B) after 400 mini-batches: <a href="#fig2">see Figure 2's heatmap</a></div></div>
+    <div class="io-arrow" aria-hidden="true">→</div>
+    <div class="io-box"><div class="io-k">Used as</div><div>Score every arm with f<sub>θ⁺</sub>, activate the top M: <a href="#fig3">see the simulation</a></div></div>
+  </div>
+</div>
+
+<section class="col">
   <p class="analogy"><b>Analogy</b>You learn what a used car is worth by watching which offers the seller accepts and which they refuse, across many offers.</p>
-  <p>Drag the marker on the training curve to see the score table change as the network learns.</p>
+  <p>Drag the marker on the training curve to see the output f<sub>θ</sub> change as the mini-batches go by.</p>
 </section>
 
 <figure class="wide" id="fig2">
@@ -294,7 +356,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 80px; padding: 28px 0 60
 <section id="results" class="col">
   <h2><span class="num">05</span>Results</h2>
   <h3>The replication</h3>
-  <p>We ran the authors' training and test scripts with two one-line compatibility fixes and the paper's settings (sigmoid sensitivity 1, 2,000 episodes, training seed 50). NeurWIN starts at −301.0, reaches −102.3 by episode 600 and ends at −99.3. The exact index scores −105.1. NeurWIN first matches it at the 570-episode checkpoint; the paper reports about 600. A rerun from scratch on a second machine matched every number within 0.05.</p>
+  <p>We ran the authors' training and test scripts with two one-line compatibility fixes and the paper's settings (sensitivity m = 1, 2,000 episodes = 400 mini-batches of R = 5, training seed 50). NeurWIN starts at −301.0, reaches −102.3 by episode 600 and ends at −99.3. The exact index scores −105.1. NeurWIN first matches it at the 570-episode checkpoint; the paper reports about 600. A rerun from scratch on a second machine matched every number within 0.05.</p>
   <h3>Why NeurWIN beats the "optimal" index</h3>
   <p>The gap is real: NeurWIN is better in all 50 test runs, by 5.8 on average (paired standard error 0.35). It is not caused by how the index breaks ties; three other tie-breaking rules move the index's score by less than 0.5. The policies differ in 40% of rounds (5,983 of 15,000), and Figure 3 shows the typical case.</p>
   <p>The Whittle index is derived one spot at a time, as if that spot could buy charging in any future round. That assumption is close to true when there are many spots and the collisions average out. With 4 cars and 1 charger it is not, and NeurWIN's imperfect score happens to lean toward charging earlier. To test this explanation we reused the same trained network at larger sizes, keeping one charger per four spots.</p>
@@ -320,7 +382,7 @@ footer { border-top: 1px solid var(--rule); margin-top: 80px; padding: 28px 0 60
     <tr><th>EV charging</th><th>AI-agent monitoring (proposed)</th></tr>
     <tr><td>Charging spot (arm)</td><td>One running agent</td></tr>
     <tr><td>M chargers per round</td><td>M monitor checks per period</td></tr>
-    <tr><td>T, rounds until the car leaves</td><td>Time until the agent's next action becomes hard to undo</td></tr>
+    <tr><td>D, rounds until the car leaves</td><td>Time until the agent's next action becomes hard to undo</td></tr>
     <tr><td>B, charge still needed</td><td>Unresolved risk in the agent's recent work</td></tr>
     <tr><td>Penalty 0.2 × B² when it leaves</td><td>Cost of a harmful action that slips through</td></tr>
     <tr><td>One score table shared by all spots</td><td>One learned scorer shared by all agents of the same model</td></tr>
@@ -329,10 +391,10 @@ footer { border-top: 1px solid var(--rule); margin-top: 80px; padding: 28px 0 60
   <p>Monitoring fleets may be small, and at small sizes a learned score can beat the textbook index. Sharing one scorer across agents needs agents that behave alike and independently; mixed models or shared memory would break that. The open questions we want to discuss:</p>
   <ol class="notes" style="font-size:15px">
     <li>Is beating the Whittle index at small N a known effect, and does it matter for small agent fleets?</li>
-    <li>In the authors' code only charging steps add to the gradient. Is that intended in Algorithm 1?</li>
+    <li>The code replays the same car arrivals in all 5 episodes of a mini-batch, which Algorithm 1 doesn't mention. Is that a deliberate variance-reduction choice?</li>
     <li>For mixed-model fleets: one score per model, or the model's identity as part of the state?</li>
-    <li>What compressed summary of an agent's memory should play the role of (T, B)?</li>
-    <li>NeurWIN sets prices from "a random state." How would we sample one when the state is an agent's context?</li>
+    <li>What compressed summary of an agent's memory should play the role of (D, B)?</li>
+    <li>Algorithm 1 sets the activation cost λ = f<sub>θ</sub>(s<sub>0</sub>) from a random state s<sub>0</sub>. How would we sample s<sub>0</sub> when the state is an agent's context?</li>
   </ol>
 </section>
 
@@ -340,9 +402,10 @@ footer { border-top: 1px solid var(--rule); margin-top: 80px; padding: 28px 0 60
   <h2><span class="num">07</span>Methods and provenance</h2>
   <ul class="notes" style="font-size:14.5px">
     <li>Code: authors' repository [2] with two compatibility fixes (<span class="mono">zero_grad(set_to_none=False)</span>; integer seeds) and the paper's settings. Algorithm, environment and hyperparameters unchanged.</li>
-    <li>Training: 2,000 episodes of 300 rounds, mini-batch 5, learning rate 0.001, discount 0.99, seed 50. Test: 50 runs, seed 30, a checkpoint every 10 episodes.</li>
+    <li>Training (Algorithm 1): 2,000 episodes of 300 rounds, mini-batches of R = 5, learning rate L = 0.001, discount β = 0.99, sensitivity m = 1, seed 50. Test: 50 runs, seed 30, a checkpoint every 10 episodes.</li>
     <li>Verified twice: cloud run (Python 3.13) and a fresh rerun on the author's MacBook (Python 3.14), all numbers within 0.05. Repository <span class="mono">hklee207/Restless-Bandit</span>, branch dev, commit 1f81a21.</li>
     <li>Limits: one training seed, as in the paper. The explanation for the small-N advantage is a hypothesis consistent with Figure 4, not a proof.</li>
+    <li>Section 03 shows values from <span class="mono">replication/algorithm1.py</span>, a line-by-line restatement of the authors' training loop in the paper's notation; with the same seeds it reproduces the authors' checkpoints exactly (max difference 0 after 10 and 2,000 episodes).</li>
     <li>This page's simulator is a JavaScript port of <span class="mono">deadlineSchedulingEnv.py</span>, checked against the Python environment on three reference runs (identical rewards and choices for both policies).</li>
   </ul>
   <h3>References</h3>
@@ -440,14 +503,14 @@ footer { border-top: 1px solid var(--rule); margin-top: 80px; padding: 28px 0 60
     const T1 = +$('f1T').value, B1 = +$('f1B').value;
     let g = `<text x="${L + 5 * cw}" y="14" font-size="11.5" text-anchor="middle" fill="${css('--muted')}">B, charge still needed →</text>`;
     for (let B = 0; B <= 9; B++) g += `<text x="${L + B * cw + cw / 2}" y="${top + 12 * ch + 16}" font-size="11" text-anchor="middle" fill="${css('--muted')}">${B}</text>`;
-    g += `<text x="12" y="${top + 6 * ch}" font-size="11.5" fill="${css('--muted')}" transform="rotate(-90 12 ${top + 6 * ch})" text-anchor="middle">T, rounds left →</text>`;
+    g += `<text x="12" y="${top + 6 * ch}" font-size="11.5" fill="${css('--muted')}" transform="rotate(-90 12 ${top + 6 * ch})" text-anchor="middle">D, rounds until it leaves →</text>`;
     let i = 0;
     for (let T = 1; T <= 12; T++) {
       g += `<text x="${L - 8}" y="${top + (T - 1) * ch + 16}" font-size="11" text-anchor="end" fill="${css('--muted')}">${T}</text>`;
       for (let B = 0; B <= 9; B++, i++) {
         const op = 0.06 + 0.9 * (r[i] / (n - 1));
         const sel = T === T1 && B === B1;
-        g += `<rect x="${L + B * cw + 1}" y="${top + (T - 1) * ch + 1}" width="${cw - 2}" height="${ch - 2}" rx="3" fill="${color}" fill-opacity="${op.toFixed(3)}" stroke="${sel ? css('--ink') : 'none'}" stroke-width="2"><title>T=${T}, B=${B}: ${tab[T][B].toFixed(3)}</title></rect>`;
+        g += `<rect x="${L + B * cw + 1}" y="${top + (T - 1) * ch + 1}" width="${cw - 2}" height="${ch - 2}" rx="3" fill="${color}" fill-opacity="${op.toFixed(3)}" stroke="${sel ? css('--ink') : 'none'}" stroke-width="2"><title>D=${T}, B=${B}: ${tab[T][B].toFixed(3)}</title></rect>`;
       }
     }
     svg.innerHTML = g;
@@ -636,12 +699,119 @@ footer { border-top: 1px solid var(--rule); margin-top: 80px; padding: 28px 0 60
     $('tbl').innerHTML = t;
   }
 
-  function redrawAll() { drawChart(); drawF1(); renderSim(); drawF4(); }
+  /* ---------- Algorithm 1, step by step ---------- */
+  const AL = D.alg1;                       // traced mini-batches from replication/algorithm1.py
+  const R = 5, LR = 0.001;
+  let alMb = 0, alStep = 0;
+  const sub = (a, b) => `${a}<sub>${b}</sub>`;
+  const fth = sub('f', 'θ'), sm = sub('σ', 'm'), he = sub('h', 'e'), Ge = sub('G', 'e'), Gb = sub('Ḡ', 'b'), Lb = sub('L', 'b');
+  const st = s => `(D = ${s[0]}, B = ${s[1]})`;
+  const sgn = (v, d = 2) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(d);
+  // [step id or null, line label, indent, text]
+  const CODE = [
+    [null, '', 0, `<b>Input:</b> θ, β ∈ (0, 1), L, m, R &nbsp;&nbsp; <b>Output:</b> θ⁺`],
+    [null, 'L1', 0, 'for each mini-batch b do'],
+    ['L2', 'L2', 1, `choose ${sub('s', '0')}, ${sub('s', '1')} uniformly at random; λ ← ${fth}(${sub('s', '0')}); ${Gb} ← 0`],
+    [null, 'L3', 1, 'for each episode e in the mini-batch do'],
+    ['L4', 'L4', 2, `set the arm to initial state ${sub('s', '1')}; ${he} ← 0`],
+    [null, 'L5', 2, 'for each round t do'],
+    ['L6', 'L6', 3, `a[t] = 1 w.p. ${sm}(${fth}(s[t]) − λ), else a[t] = 0`],
+    ['L7', 'L7–8', 3, `if a[t] = 1: ${he} ← ${he} + ∇<sub>θ</sub> ln ${sm}(${fth}(s[t]) − λ)`],
+    ['L7', 'L9–10', 3, `else: ${he} ← ${he} + ∇<sub>θ</sub> ln(1 − ${sm}(${fth}(s[t]) − λ))`],
+    ['L12', 'L12', 2, `${Ge} ← empirical discounted net reward of episode e`],
+    ['L13', 'L13', 2, `${Gb} ← ${Gb} + ${Ge} / R`],
+    ['L15', 'L15', 1, `${Lb} ← learning rate in mini-batch b`],
+    ['L16', 'L16', 1, `θ ← θ + ${Lb} Σ<sub>e</sub> (${Ge} − ${Gb}) ${he}`],
+    ['rule'],
+    [null, '', 0, `${sm}(x) = 1 / (1 + e<sup>−mx</sup>); net reward in a round = r[t] − λ·a[t]`],
+  ];
+  const STEPS = ['L2', 'L4', 'L6', 'L7', 'L12', 'L13', 'L15', 'L16'];
+
+  function bars(vals, labels) {
+    const mx = Math.max(...vals.map(Math.abs), 1e-9);
+    return '<div class="bars">' + vals.map((v, i) => {
+      const w = Math.abs(v) / mx * 50, left = v >= 0 ? 50 : 50 - w;
+      const col = v >= 0 ? css('--blue') : css('--muted');
+      return `<span class="mono" style="color:var(--muted)">${labels[i]}</span><span class="track2"><span class="zero"></span><i style="left:${left}%;width:${w}%;background:${col}"></i></span><span class="v">${sgn(v)}</span>`;
+    }).join('') + '</div>';
+  }
+
+  function stepView(id, r) {
+    const ep0 = (r.b - 1) * R + 1, ep1 = r.b * R, f = r.first_rounds;
+    const eRows = (cols, row) => `<table class="data"><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr>` + r.G_e.map((_, i) => `<tr>${row(i).map(c => `<td class="n">${c}</td>`).join('')}</tr>`).join('') + '</table>';
+    switch (id) {
+      case 'L2': return {
+        title: 'Pick the activation cost', fn: 'newMiniBatchReset',
+        vals: `<div class="kv"><div><span>${sub('s', '0')}</span><strong>${st(r.s0)}</strong></div><div><span>λ = ${fth}(${sub('s', '0')})</span><strong>${sgn(r.lam, 4)}</strong></div><div><span>${Gb}</span><strong>0</strong></div></div>`,
+        plain: `The activation cost for mini-batch ${r.b} is the current network's score for a random vehicle ${st(r.s0)}: λ = ${sgn(r.lam, 3)}. For all ${R} episodes the spot plays Env*(λ), paying λ in every round it is activated. (The code draws ${sub('s', '0')} at the first round of the mini-batch, B first, then D.)` };
+      case 'L4': return {
+        title: 'Start an episode', fn: 'env.reset()',
+        vals: `<div class="kv"><div><span>${sub('s', '1')}</span><strong>${st(r.s1)}</strong></div><div><span>${he}</span><strong>0</strong></div><div><span>episodes</span><strong>${fmtN(ep0)}–${fmtN(ep1)}</strong></div></div>`,
+        plain: `A vehicle that needs ${r.s1[1]} unit${r.s1[1] === 1 ? '' : 's'} and leaves in ${r.s1[0]} round${r.s1[0] === 1 ? '' : 's'} pulls into the empty spot, and the gradient tally ${he} starts at zero. Not in Algorithm 1: the code draws the arrivals once per mini-batch, so all ${R} episodes replay the same vehicles at the same rounds; only the activation decisions differ.` };
+      case 'L6': return {
+        title: 'Choose the action each round', fn: 'takeAction',
+        vals: `<table class="data"><tr><th>round t</th><th>s[t]</th><th>${fth}(s[t])</th><th>${sm}(${fth}(s[t]) − λ)</th><th>a[t]</th></tr>`
+          + f.map(x => `<tr><td class="n">${x.t}</td><td class="n">(${x.s_t[0]}, ${x.s_t[1]})</td><td class="n">${sgn(x.f_theta, 4)}</td><td class="n">${x.sigma.toFixed(4)}</td><td class="n">${x.a_t}</td></tr>`).join('') + '</table><div class="fn">First 3 rounds of episode 1, λ = ' + sgn(r.lam, 4) + '</div>',
+        plain: `Each round the spot scores its vehicle with ${fth} and is activated with probability ${sm}(${fth}(s[t]) − λ): more likely the further the score is above λ, but with m = 1 never certain. That randomness is what lets the network learn which choices pay off.` + (f.some(x => x.s_t[0] === 0 && x.a_t === 1) ? ' Note round ' + f.find(x => x.s_t[0] === 0 && x.a_t === 1).t + ': the spot is empty (0, 0) but is activated anyway, which earns nothing and still pays λ.' : '') };
+      case 'L7': return {
+        title: 'Add up the gradient of each choice', fn: 'takeAction → logProb.backward(); _saveEpisodeGradients',
+        vals: `<div class="fn">Length of each episode's tally ‖${he}‖ (625 weights):</div>` + eRows(['episode e', `‖${he}‖`, 'rounds activated'], i => [i + 1, r.h_e_size[i].toFixed(2), r.charged[i] + ' / 300']),
+        plain: `Every round, activated or not, adds to ${he} the direction that would make that round's choice more likely. Whether those directions get reinforced or reversed is decided in L16 by how the episode turned out.` };
+      case 'L12': return {
+        title: 'Score the episode', fn: 'learn(): reward -= self.cost; _discountRewards',
+        vals: eRows(['episode e', `${Ge}`, 'rounds activated'], i => [i + 1, sgn(r.G_e[i], 3), r.charged[i] + ' / 300'])
+          + `<div class="fn">Episode 1, round 0: r[0] = ${sgn(f[0].r_t)}, a[0] = ${f[0].a_t}, net reward r[0] − λ·a[0] = ${sgn(f[0].net, 4)}</div>`,
+        plain: `${Ge} adds up the spot's net reward over 300 rounds: +0.5 per unit charged, −0.2 B² when a vehicle leaves short, minus λ for every round it was activated, discounted by β<sup>t</sup> with β = 0.99. The code returns −${Ge} and keeps that sign until the Adam step.` };
+      case 'L13': return {
+        title: 'The bootstrapped baseline', fn: '_performBatchStep (meanBatchReward)',
+        vals: `<div class="kv"><div><span>${Gb} = average of the ${R} ${Ge}</span><strong>${sgn(r.G_bar_b, 3)}</strong></div></div>` + eRows(['episode e', `${Ge}`], i => [i + 1, sgn(r.G_e[i], 3)]),
+        plain: `${Gb} is the typical score of this mini-batch. Each episode is judged against its siblings, which saw the same vehicles, rather than by its raw score, which is negative mostly because of departure penalties.` };
+      case 'L15': return {
+        title: 'The learning rate', fn: 'torch.optim.Adam(lr=L) in NEURWIN.__init__',
+        vals: `<div class="kv"><div><span>${Lb}</span><strong>${LR}</strong></div><div><span>mini-batch</span><strong>${r.b} of 400</strong></div></div>`,
+        plain: `The step size is the same in every mini-batch: ${Lb} = L = 0.001. The Adam optimizer also rescales each weight's step, so every weight moves by about L.` };
+      case 'L16': return {
+        title: 'Gradient ascent', fn: '_performBatchStep → optimizer.step()',
+        vals: `<div class="fn">Offset net rewards ${Ge} − ${Gb}:</div>` + bars(r.offsets, r.offsets.map((_, i) => 'e=' + (i + 1)))
+          + `<div class="kv"><div><span>θ moved ‖Δθ‖</span><strong>${r.theta_change.toFixed(5)}</strong></div></div>`
+          + `<table class="data"><tr><th>state</th><th>${fth} before</th><th>${fth} after</th></tr>` + r.watch.map(w => `<tr><td class="n">(${w.D}, ${w.B})</td><td class="n">${sgn(w.before, 4)}</td><td class="n">${sgn(w.after, 4)}</td></tr>`).join('') + '</table>',
+        plain: `Episodes with a positive offset net reward make their choices more likely; the others make theirs less likely. The result is a new θ, so every score ${fth}(D, B) shifts a little. Adam minimizes, so the code stores −Σ<sub>e</sub>(${Ge} − ${Gb})${he} and steps down it, which is gradient ascent on the discounted net reward.` };
+    }
+  }
+
+  function drawAlg() {
+    const r = AL[alMb], id = STEPS[alStep];
+    $('algMb').innerHTML = AL.map((x, i) => `<button class="${i === alMb ? 'on' : ''}" data-i="${i}" aria-pressed="${i === alMb}">${x.b}</button>`).join('');
+    $('algMbInfo').textContent = `episodes ${fmtN((r.b - 1) * R + 1)}–${fmtN(r.b * R)} of 2,000`;
+    $('algCode').innerHTML = CODE.map(c => c[0] === 'rule' ? '<div class="rule"></div>'
+      : `<div class="ln${c[0] ? ' step' : ''}${c[0] === id ? ' cur' : ''}"${c[0] ? ` data-s="${c[0]}" tabindex="0" role="button"` : ''}><span class="no">${c[1]}</span><span style="padding-left:${c[2] * 1.4}em">${c[3]}</span></div>`).join('');
+    const v = stepView(id, r);
+    $('algSide').innerHTML = `<h4><span class="mono">${id === 'L7' ? 'L7–10' : id}</span>${v.title}</h4><div class="fn">Authors' code: <code>${v.fn}</code></div>${v.vals}<p class="alg-plain">${v.plain}</p>`;
+    $('algPrev').disabled = alMb === 0 && alStep === 0;
+    $('algNext').disabled = alMb === AL.length - 1 && alStep === STEPS.length - 1;
+    let t = `<tr><th>mini-batch b</th><th>${sub('s', '0')}</th><th>λ</th><th>${sub('s', '1')}</th><th>${Gb}</th><th>offset net rewards ${Ge} − ${Gb}</th><th>‖Δθ‖</th></tr>`;
+    AL.forEach((x, i) => { t += `<tr class="${i === alMb ? 'cur' : ''}"><td class="n">${x.b}</td><td class="n">(${x.s0[0]}, ${x.s0[1]})</td><td class="n">${sgn(x.lam, 4)}</td><td class="n">(${x.s1[0]}, ${x.s1[1]})</td><td class="n">${sgn(x.G_bar_b, 3)}</td><td class="n">${x.offsets.map(o => sgn(o)).join(' ')}</td><td class="n">${x.theta_change.toFixed(5)}</td></tr>`; });
+    $('algTbl').innerHTML = t;
+  }
+  function algMove(d) {
+    alStep += d;
+    if (alStep >= STEPS.length) { if (alMb < AL.length - 1) { alMb++; alStep = 0; } else alStep = STEPS.length - 1; }
+    if (alStep < 0) { if (alMb > 0) { alMb--; alStep = STEPS.length - 1; } else alStep = 0; }
+    drawAlg();
+  }
+  $('algNext').addEventListener('click', () => algMove(1));
+  $('algPrev').addEventListener('click', () => algMove(-1));
+  $('algMb').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { alMb = +b.dataset.i; drawAlg(); } });
+  const jump = e => { const l = e.target.closest('.ln.step'); if (l) { alStep = STEPS.indexOf(l.dataset.s); drawAlg(); } };
+  $('algCode').addEventListener('click', jump);
+  $('algCode').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jump(e); } });
+
+  function redrawAll() { drawChart(); drawF1(); renderSim(); drawF4(); drawAlg(); }
   const mq = window.matchMedia('(prefers-color-scheme: dark)');
   if (mq.addEventListener) mq.addEventListener('change', redrawAll);
   new MutationObserver(redrawAll).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
-  drawChart(); drawF1(); drawF4(); reset(true);
+  drawChart(); drawF1(); drawF4(); drawAlg(); reset(true);
 })();
 </script>
 </body>
