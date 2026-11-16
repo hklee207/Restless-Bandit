@@ -1,10 +1,12 @@
 """
-Helper functions for explore.ipynb: train, evaluate and plot the NeurWIN deadline-scheduling
-(EV charging) example with different settings.
+Helper functions for explore.ipynb: Algorithm 1's inputs -> its output theta+ -> how theta+ is
+used, for the NeurWIN deadline-scheduling (EV charging) example.
 
-Nothing here changes the authors' code. Training uses their NEURWIN class and env exactly as
-the deadline block of main.py does; testing follows their test loop the same way
-replication/curve.py does (same env class, same seed, top-M by score, ties to the lowest arm).
+Nothing here changes the authors' code. Training runs algorithm1.train(), which reproduces the
+authors' NEURWIN training exactly; testing follows their test loop the same way
+replication/curve.py does (same env class, same seed, activate the M arms with the highest
+score, ties to the lowest arm). States are written (D, B) as in the paper; the authors' code
+calls D "T".
 """
 import os, sys, io, re, glob, json, time, random, contextlib, warnings
 
@@ -18,8 +20,10 @@ if REPO not in sys.path:
 
 with contextlib.redirect_stderr(io.StringIO()), warnings.catch_warnings():
     warnings.simplefilter("ignore")            # gym prints a long "unmaintained" notice on import
-    from neurwin import NEURWIN, fcnn
+    from neurwin import fcnn
     from envs.deadlineSchedulingEnv import deadlineSchedulingEnv
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import algorithm1                              # Algorithm 1 in the paper's notation (same folder)
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
@@ -62,50 +66,71 @@ def _show_table(df):
 
 # ───────────────────────────── training ─────────────────────────────
 
-def train(name, episodes=2000, sigmoid_m=1, seed=50, lr=1e-3, save_every=50, force=False, verbose=False):
-    """Train a new NeurWIN network on the deadline env, set up and seeded like main.py.
+REPLICATION_INPUTS = dict(episodes=2000, m=1.0, L=1e-3, R=5, beta=0.99, seed=50)   # main.py's deadline block
 
-    Checkpoints go to trainResults/experiments/<name>/, never to the replication's folder.
-    If <name> was already trained with the same settings it is reused; with different settings
-    you get an error unless force=True. Returns the folder.
-    """
+
+def read_inputs(folder):
+    """The Algorithm 1 inputs an experiment folder was trained with (from its settings.json)."""
+    with open(os.path.join(folder, "settings.json")) as f:
+        s = json.load(f)
+    if "sigmoid_m" in s:      # written by the first version of this file (authors' NEURWIN class, R=5, beta=0.99)
+        s = dict(episodes=s["episodes"], m=s["sigmoid_m"], L=s["lr"], R=BATCHSIZE, beta=DISCOUNT, seed=s["seed"])
+    return dict(episodes=int(s["episodes"]), m=float(s["m"]), L=float(s["L"]), R=int(s["R"]),
+                beta=float(s["beta"]), seed=int(s["seed"]))
+
+
+def _inputs(episodes, m, L, R, beta, seed):
+    return dict(episodes=int(episodes), m=float(m), L=float(L), R=int(R), beta=float(beta), seed=int(seed))
+
+
+def train(name, episodes=2000, m=1, L=1e-3, R=5, beta=0.99, seed=50, save_every=10):
+    """Run Algorithm 1 (algorithm1.train) and save theta+ and its checkpoints in
+    trainResults/experiments/<name>/. Never overwrites: if <name> exists with the same inputs it
+    is reused, with other inputs you get an error (pick another name). Returns the folder."""
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", str(name)):
         raise ValueError("name may only contain letters, digits, '_', '-' and '.'")
     folder = os.path.join(EXPERIMENT_DIR, str(name)) + "/"
-    settings = dict(episodes=int(episodes), sigmoid_m=float(sigmoid_m), seed=int(seed), lr=float(lr),
-                    save_every=int(save_every))
-    settings_file = folder + "settings.json"
-    if os.path.exists(settings_file) and not force:
-        with open(settings_file) as f:
-            old = json.load(f)
-        if old == settings and int(episodes) in checkpoints(folder):
-            print(f"'{name}' is already trained with these settings; reusing {folder}")
+    inputs = _inputs(episodes, m, L, R, beta, seed)
+    if os.path.exists(folder):
+        old = read_inputs(folder) if os.path.exists(folder + "settings.json") else None
+        if old == inputs and inputs["episodes"] in checkpoints(folder):
+            print(f"'{name}' was already trained with these inputs; reusing {folder}")
             return folder
-        raise ValueError(f"experiment '{name}' exists with other settings {old}. "
-                         f"Pick a new name, or pass force=True to train over it.")
-    os.makedirs(folder, exist_ok=True)
-
-    # --- from here: main.py, deadline block ---
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    env = deadlineSchedulingEnv(seed=seed, numEpisodes=episodes, episodeLimit=EPISODELIMIT,
-                                maxDeadline=MAXDEADLINE, maxLoad=MAXLOAD, newJobProb=NEWJOBPROB,
-                                processingCost=PROCESSINGCOST, train=True, batchSize=BATCHSIZE, noiseVar=0.0)
-    agent = NEURWIN(stateSize=STATESIZE, lr=lr, env=env, sigmoidParam=sigmoid_m, numEpisodes=episodes,
-                    noiseVar=0.0, seed=seed, batchSize=BATCHSIZE, discountFactor=DISCOUNT,
-                    saveDir=folder, episodeSaveInterval=save_every)
-    print(f"training '{name}': {episodes} episodes, sigmoid m = {sigmoid_m}, seed {seed}, lr {lr} ...")
+        raise ValueError(f"experiment '{name}' already exists with inputs {old}; "
+                         f"it is never overwritten, so pick another name.")
+    os.makedirs(folder)
+    print(f"running Algorithm 1 for '{name}': " + ", ".join(f"{k}={v}" for k, v in inputs.items()) + " ...")
     start = time.time()
-    if verbose:
-        agent.learn()
-    else:                                        # learn() prints a line per episode
-        with contextlib.redirect_stdout(io.StringIO()):
-            agent.learn()
-    with open(settings_file, "w") as f:
-        json.dump(settings, f, indent=1)
+    algorithm1.train(inputs["episodes"], m=inputs["m"], L=inputs["L"], beta=inputs["beta"], R=inputs["R"],
+                     seed=inputs["seed"], save_dir=folder, save_every=save_every)
+    with open(folder + "settings.json", "w") as f:
+        json.dump(dict(inputs, save_every=int(save_every)), f, indent=1)
     print(f"done in {time.time() - start:.0f} s, {len(checkpoints(folder))} checkpoints saved in {folder}")
     return folder
+
+
+def theta_plus_dir(episodes=2000, m=1, L=1e-3, R=5, beta=0.99, seed=50):
+    """Folder holding theta+ for these Algorithm 1 inputs. The replication's inputs give the
+    authors' checkpoints (algorithm1.train reproduces them exactly); other inputs are trained
+    once into trainResults/experiments/<inputs>/ and reused after that."""
+    inputs = _inputs(episodes, m, L, R, beta, seed)
+    if inputs == REPLICATION_INPUTS:
+        return DEFAULT_MODEL_DIR
+    name = "ep{episodes}_m{m:g}_L{L:g}_R{R}_beta{beta:g}_seed{seed}".format(**inputs)
+    return train(name, **inputs)
+
+
+def describe(folder):
+    """Short label for a model folder, e.g. 'm5 (m = 5)'."""
+    if os.path.normpath(folder) == os.path.normpath(DEFAULT_MODEL_DIR):
+        return "Replication (m = 1)"
+    name = os.path.basename(os.path.normpath(folder))
+    try:
+        inputs = read_inputs(folder)
+    except (OSError, KeyError, ValueError):
+        return name
+    changed = [f"{k} = {v:g}" for k, v in inputs.items() if v != REPLICATION_INPUTS[k]]
+    return f"{name} ({', '.join(changed)})" if changed else name
 
 
 # ───────────────────────────── testing ─────────────────────────────
@@ -124,30 +149,30 @@ def checkpoints(model_dir=None):
     return dict(sorted(found.items()))
 
 
-def closed_form(T, B):
+def closed_form(D, B):
     """Closed-form deadline Whittle index, as selectDeadlineIndex() in the test script."""
     if B == 0:
         return 0.0
-    if 1 <= B <= T - 1:
+    if 1 <= B <= D - 1:
         return 1 - PROCESSINGCOST
-    return DISCOUNT**(T - 1)*0.2*((B - T + 1)**2 - (B - T)**2) + 1 - PROCESSINGCOST
+    return DISCOUNT**(D - 1)*0.2*((B - D + 1)**2 - (B - D)**2) + 1 - PROCESSINGCOST
 
 
 def index_table():
-    """Closed-form index for every state: {(T, B): score}."""
-    return {(T, B): closed_form(T, B) for T in range(MAXDEADLINE + 1) for B in range(MAXLOAD + 1)}
+    """Closed-form index for every state: {(D, B): score}."""
+    return {(D, B): closed_form(D, B) for D in range(MAXDEADLINE + 1) for B in range(MAXLOAD + 1)}
 
 
 def score_table(model_path):
-    """A trained network's score for every state: {(T, B): score}. The network is only
+    """A trained network's score for every state: {(D, B): score}. The network is only
     ever asked about these 130 states, so a lookup table gives the same choices."""
     net = fcnn(STATESIZE)
     net.load_state_dict(torch.load(model_path))
     net.eval()
-    grid = np.array([[T, B] for T in range(MAXDEADLINE + 1) for B in range(MAXLOAD + 1)], dtype=np.float32)
+    grid = np.array([[D, B] for D in range(MAXDEADLINE + 1) for B in range(MAXLOAD + 1)], dtype=np.float32)
     with torch.no_grad():
         values = [float(net.forward(s)[0]) for s in grid]
-    return {(int(T), int(B)): v for (T, B), v in zip(grid, values)}
+    return {(int(D), int(B)): v for (D, B), v in zip(grid, values)}
 
 
 def rollout(score, N, M, runs):
@@ -307,51 +332,65 @@ def plot_scaling(model_dir=None, sizes=((4, 1), (8, 2), (20, 5)), runs=50):
     _show_table(table)
 
 
-def plot_score_tables(model_dir=None, episode=None):
-    """Two heatmaps side by side on one color scale: NeurWIN's learned score and the
-    closed-form index, for every state (T, B). Prints a short comparison underneath."""
-    model_dir = DEFAULT_MODEL_DIR if model_dir is None else model_dir
-    found = checkpoints(model_dir)
-    episode = max(found) if episode is None else episode
-    nw, cf = score_table(found[episode]), index_table()
-    Ts, Bs = range(MAXDEADLINE + 1), range(MAXLOAD + 1)
-    A = np.array([[nw[(T, B)] for B in Bs] for T in Ts])
-    C = np.array([[cf[(T, B)] for B in Bs] for T in Ts])
-    lo, hi = min(A.min(), C.min()), max(A.max(), C.max())
+def whittle_accuracy(score):
+    """How close a score table is to being Whittle-accurate (Def. 4) on the 120 states with a
+    vehicle slot in use (D = 1..12, B = 0..9). An index only matters through its order: f is
+    Whittle-accurate when, for every activation cost lam, f(s) > lam exactly where W(s) > lam,
+    i.e. f orders the states like W. Returns (rank correlation, share of pairs with W(s) > W(s')
+    that f also puts in that order)."""
+    W = index_table()
+    states = [(D, B) for D in range(1, MAXDEADLINE + 1) for B in range(MAXLOAD + 1)]
+    f = np.array([score[s] for s in states]); w = np.array([W[s] for s in states])
+    rank = lambda v: pd.Series(v).rank().to_numpy()
+    rho = float(np.corrcoef(rank(f), rank(w))[0, 1])
+    i, j = np.where(w[:, None] > w[None, :] + 1e-12)
+    return rho, float((f[i] > f[j]).mean())
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 7), facecolor=SURFACE, sharey=True)
-    for ax, grid, name in ((axes[0], A, f"NeurWIN score (checkpoint {episode})"),
-                           (axes[1], C, "Closed-form Whittle index")):
-        im = ax.imshow(grid, cmap=BLUES, vmin=lo, vmax=hi, aspect="auto")
-        for T in Ts:
-            for B in Bs:
-                dark = (grid[T, B] - lo)/(hi - lo) > 0.55
-                ax.text(B, T, f"{grid[T, B]:.2f}", ha="center", va="center", fontsize=8.5,
+
+def plot_theta_plus(model_dirs, episode=None):
+    """Heatmaps of the output theta+, f_theta(D, B), for each model folder, next to the
+    closed-form Whittle index W(D, B), over the 120 states D = 1..12, B = 0..9. Each grid has
+    its own color scale (an index only matters through its order). Prints how Whittle-accurate
+    each f_theta is."""
+    if isinstance(model_dirs, (str, os.PathLike)):
+        model_dirs = [model_dirs]
+    Ds, Bs = range(1, MAXDEADLINE + 1), range(MAXLOAD + 1)
+    W = index_table()
+    panels, rows = [], []
+    for folder in model_dirs:
+        found = checkpoints(folder)
+        ep = max(found) if episode is None else episode
+        score = score_table(found[ep])
+        panels.append((f"f_theta+  {describe(folder)}, episode {ep}", score))
+        rho, pairs = whittle_accuracy(score)
+        rows.append({"model": describe(folder), "episode": ep, "rank correlation with W": round(rho, 3),
+                     "pairs ordered like W": f"{100 * pairs:.1f}%"})
+    panels.append(("W(D, B)  closed-form Whittle index", W))
+
+    fig, axes = plt.subplots(1, len(panels), figsize=(6.4 * len(panels), 6.6), facecolor=SURFACE, sharey=True)
+    for ax, (name, table) in zip(np.atleast_1d(axes), panels):
+        grid = np.array([[table[(D, B)] for B in Bs] for D in Ds])
+        lo, hi = grid.min(), grid.max()
+        ax.imshow(grid, cmap=BLUES, vmin=lo, vmax=hi, aspect="auto")
+        for r, D in enumerate(Ds):
+            for k, B in enumerate(Bs):
+                dark = (grid[r, k] - lo) / max(hi - lo, 1e-12) > 0.55
+                ax.text(k, r, f"{grid[r, k]:.2f}", ha="center", va="center", fontsize=8,
                         color="#ffffff" if dark else INK)
-        ax.set_xticks(list(Bs)); ax.set_yticks(list(Ts))
+        ax.set_xticks(range(len(Bs))); ax.set_xticklabels(list(Bs))
+        ax.set_yticks(range(len(Ds))); ax.set_yticklabels(list(Ds))
         ax.set_xticks(np.arange(-0.5, len(Bs)), minor=True)
-        ax.set_yticks(np.arange(-0.5, len(Ts)), minor=True)
+        ax.set_yticks(np.arange(-0.5, len(Ds)), minor=True)
         ax.grid(which="minor", color=SURFACE, lw=2)          # thin gaps between cells
         ax.tick_params(which="both", length=0, colors=INK2)
         for side in ax.spines.values():
             side.set_visible(False)
         ax.set_xlabel("B: charge still needed", color=INK2)
-        ax.set_title(name, loc="left", fontsize=13, color=INK)
-    axes[0].set_ylabel("T: rounds until the car leaves", color=INK2)
-    cbar = fig.colorbar(im, ax=axes, fraction=0.025, pad=0.02)
-    cbar.outline.set_visible(False)
-    cbar.ax.tick_params(colors=INK2, length=0)
-    cbar.set_label("score (higher = charge first)", color=INK2)
+        ax.set_title(name, loc="left", fontsize=11.5, color=INK)
+    np.atleast_1d(axes)[0].set_ylabel("D: rounds until the vehicle leaves", color=INK2)
+    fig.suptitle("Darker = higher score = activate first (each grid has its own color scale)",
+                 x=0.01, ha="left", fontsize=10.5, color=INK2)
+    plt.tight_layout()
     plt.show()
-
-    cars = [(T, B) for T in range(1, MAXDEADLINE + 1) for B in range(1, MAXLOAD + 1)]   # a car that still needs charge
-    a = np.array([nw[s] for s in cars]); c = np.array([cf[s] for s in cars])
-    rank = lambda v: pd.Series(v).rank().to_numpy()
-    print(f"Over the {len(cars)} states with a car that still needs charge (T >= 1, B >= 1):")
-    print(f"  correlation of the two scores: {np.corrcoef(a, c)[0, 1]:.3f}   "
-          f"rank correlation: {np.corrcoef(rank(a), rank(c))[0, 1]:.3f}")
-    print(f"  mean absolute difference: {np.abs(a - c).mean():.2f}")
-    worst = sorted(cars, key=lambda s: -abs(nw[s] - cf[s]))[:5]
-    print("  largest differences:")
-    _show_table(pd.DataFrame([{"T": T, "B": B, "NeurWIN": round(nw[(T, B)], 2), "index": round(cf[(T, B)], 2),
-                               "NeurWIN - index": round(nw[(T, B)] - cf[(T, B)], 2)} for T, B in worst]))
+    print("How Whittle-accurate theta+ is (Def. 4), over the 120 states D = 1..12, B = 0..9:")
+    _show_table(pd.DataFrame(rows))
