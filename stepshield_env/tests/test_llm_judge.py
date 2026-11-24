@@ -13,7 +13,9 @@ sys.path[:0] = [str(ROOT), str(ROOT / "tests")]
 
 from data import load_runs, pair_runs
 from env import Game, sample_game
-from llm_judge import (NO_RESULT, LLMJudgePolicy, LLMJudgeScorer, build_prompt,
+import llm_judge
+from llm_judge import (NO_RESULT, AnthropicTransport, LLMJudgePolicy, LLMJudgeScorer,
+                       MalformedResponse, OpenAITransport, build_prompt, coerce_verdict,
                        load_stepshield_prompts, parse_reply, risk)
 from policies import RoundRobinPolicy
 from run import play
@@ -35,8 +37,9 @@ class Fake:
     def __init__(self, make=lambda user: reply()):
         self.make, self.calls = make, []
 
-    def send(self, system, user):
+    def send(self, system, user, max_tokens=None):
         self.calls.append(user)
+        self.rooms = getattr(self, "rooms", []) + [max_tokens]
         return self.make(user)
 
 
@@ -44,7 +47,7 @@ class Failing:
     def __init__(self, code):
         self.code, self.calls = code, 0
 
-    def send(self, system, user):
+    def send(self, system, user, max_tokens=None):
         self.calls += 1
         raise urllib.error.HTTPError("u", self.code, "x", {}, io.BytesIO(b"nope"))
 
@@ -172,6 +175,169 @@ class FetchTests(unittest.TestCase):
 
             s.fetch([s.prompt(TASK, STEP, 1)], WithKey(), log=lambda *a: 0)
             self.assertNotIn("SECRET-KEY", (Path(d) / "c.json").read_text())
+
+
+class NoSleep:
+    def __enter__(self):
+        self.old, llm_judge.time.sleep = llm_judge.time.sleep, lambda x: None
+
+    def __exit__(self, *a):
+        llm_judge.time.sleep = self.old
+
+
+def quiet(*a):
+    pass
+
+
+class ReviewFixTests(unittest.TestCase):
+    """Fixes from the code review before the paid run."""
+
+    def entry(self, text):
+        return LLMJudgeScorer._entry(reply(text))
+
+    def test_quoted_booleans_and_bad_values(self):
+        self.assertEqual(coerce_verdict({"is_rogue": "false", "confidence": 0.9}), (False, 0.9))
+        self.assertEqual(coerce_verdict({"is_rogue": "TRUE", "confidence": "0.7"}), (True, 0.7))
+        for bad in ({"is_rogue": "maybe", "confidence": 0.5},
+                    {"is_rogue": 1, "confidence": 0.5},
+                    {"is_rogue": True, "confidence": 1.5},
+                    {"is_rogue": True, "confidence": True},
+                    {"is_rogue": True, "confidence": "high"},
+                    {"is_rogue": True},
+                    {"confidence": 0.5}):
+            self.assertIsNone(coerce_verdict(bad), bad)
+        e = self.entry('{"is_rogue": "false", "confidence": 0.9}')
+        self.assertEqual((e["status"], e["is_rogue"]), ("ok", False))
+        self.assertEqual(self.entry('{"is_rogue": "yes", "confidence": 0.9}')["status"],
+                         "parse_error")
+
+    def test_cut_off_reply_gets_one_retry_with_more_room(self):
+        s = scorer()
+        p = s.prompt(TASK, STEP, 1)
+        fake = Fake(lambda u: None)
+        replies = iter([reply('{"is_rog', "max_tokens"), reply()])
+        fake.make = lambda u: next(replies)
+        fake.max_tokens = 1024
+        rep = s.fetch([p], fake, log=quiet)
+        self.assertEqual((rep["done"], rep["truncated_retried"]), (1, 1))
+        self.assertEqual(fake.rooms, [None, 2048])
+        self.assertEqual(s.lookup(TASK, STEP, 1)["status"], "ok")
+
+    def test_still_cut_off_is_not_cached(self):
+        s = scorer()
+        fake = Fake(lambda u: reply('{"is_rog', "length"))
+        rep = s.fetch([s.prompt(TASK, STEP, 1)], fake, log=quiet)
+        self.assertEqual((rep["done"], rep["failed"]), (0, 1))
+        self.assertIn("cut off", rep["errors"][0])
+        self.assertIsNone(s.lookup(TASK, STEP, 1))
+
+    def test_malformed_api_response_retried_not_cached(self):
+        s = scorer()
+
+        class Bad(Fake):
+            def send(self, system, user, max_tokens=None):
+                self.calls.append(user)
+                raise MalformedResponse("not JSON")
+
+        bad = Bad()
+        with NoSleep():
+            rep = s.fetch([s.prompt(TASK, STEP, 1)], bad, retries=3, log=quiet)
+        self.assertEqual((rep["failed"], len(bad.calls)), (1, 3))
+        self.assertIsNone(s.lookup(TASK, STEP, 1))
+
+    def test_unexpected_error_does_not_lose_saved_scores(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = scorer(d)
+
+            def make(u):
+                if "Step 2" in u:
+                    raise RuntimeError("surprise")
+                return reply()
+
+            prompts = [s.prompt(TASK, STEP, t) for t in (1, 2, 3)]
+            rep = s.fetch(prompts, Fake(make), workers=1, log=quiet)
+            self.assertEqual((rep["done"], rep["failed"]), (2, 1))
+            self.assertIn("RuntimeError", rep["errors"][0])
+            self.assertEqual(len(scorer(d).missing(prompts)), 1)  # saved to disk
+
+    def test_transports_reject_bad_shapes(self):
+        old = llm_judge._post
+        try:
+            llm_judge._post = lambda *a: {"type": "error"}
+            with self.assertRaises(MalformedResponse):
+                AnthropicTransport("k", "m").send("s", "u")
+            llm_judge._post = lambda *a: {"choices": []}
+            with self.assertRaises(MalformedResponse):
+                OpenAITransport("k", "m").send("s", "u")
+        finally:
+            llm_judge._post = old
+
+    def test_non_json_body_is_malformed(self):
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+            def read(self):
+                return b"<html>bad gateway</html>"
+
+        old = llm_judge.urllib.request.urlopen
+        llm_judge.urllib.request.urlopen = lambda *a, **k: Resp()
+        try:
+            with self.assertRaises(MalformedResponse):
+                llm_judge._post("https://x", {}, {}, 1)
+        finally:
+            llm_judge.urllib.request.urlopen = old
+
+    def test_anthropic_request_shape(self):
+        sent = {}
+        old = llm_judge._post
+
+        def capture(url, headers, body, timeout):
+            sent.update(body)
+            return {"content": [{"type": "thinking", "thinking": ""},
+                                {"type": "text", "text": "{}"}],
+                    "stop_reason": "end_turn", "usage": {"input_tokens": 5,
+                                                         "output_tokens": 7}}
+
+        llm_judge._post = capture
+        try:
+            r = AnthropicTransport("k", "claude-haiku-5-5").send("sys", "u", max_tokens=2048)
+        finally:
+            llm_judge._post = old
+        self.assertNotIn("temperature", sent)
+        self.assertEqual(sent["output_config"], {"effort": "low"})
+        self.assertEqual(sent["max_tokens"], 2048)
+        self.assertEqual((r["text"], r["in_tok"], r["out_tok"]), ("{}", 5, 7))
+
+    def test_cap_counts_spend_from_earlier_runs(self):
+        with tempfile.TemporaryDirectory() as d:
+            prompts = lambda s, a, b: [s.prompt(TASK, STEP, t) for t in range(a, b)]
+            s = scorer(d)
+            # each call: (100 + 20) tokens at $1 per 1M = $0.00012
+            s.fetch(prompts(s, 1, 6), Fake(), workers=1, prices=(1, 1), log=quiet)
+            s2 = scorer(d)
+            self.assertAlmostEqual(s2.spent((1, 1)), 5 * 1.2e-4)
+            fake = Fake()
+            rep = s2.fetch(prompts(s2, 6, 20), fake, workers=1, max_cost=6e-4,
+                           prices=(1, 1), log=quiet)
+            self.assertEqual(len(fake.calls), 0)  # $0.0006 already spent
+            self.assertEqual(rep["not_run"], 14)
+
+    def test_unknown_price_is_refused(self):
+        s = scorer()
+        with self.assertRaises(ValueError):
+            s.fetch([s.prompt(TASK, STEP, 1)], Fake(), prices=(float("nan"),) * 2,
+                    log=quiet)
+        from run_llm_judge import main
+        with tempfile.TemporaryDirectory() as d:
+            fake, log = Fake(), []
+            code = main(["--model", "some-new-model", "--games", "1",
+                         "--cache", str(Path(d) / "c.json")], transport=fake, log=log.append)
+            self.assertEqual((code, fake.calls), (2, []))
+            self.assertIn("--price-in", "\n".join(log))
 
 
 class PolicyTests(unittest.TestCase):

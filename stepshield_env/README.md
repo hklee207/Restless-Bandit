@@ -45,7 +45,16 @@ python3 run_llm_judge.py                    # full run, stops at --max-cost (def
 - The current step's result is hidden: the prompt's Observation line says the step
   has not run yet. `--show-result` is a sensitivity check that shows it.
 - API failures are retried and reported, never cached as "safe". A 401/403/400 stops
-  the run at once. Refusals and unparsable replies are cached with a status, count as
-  no signal, and are reported.
+  the run at once. Malformed API responses are retried too. A reply cut off at the
+  token limit gets one retry with twice the room; if it is still cut off, it is
+  reported and not cached. Refusals and unparsable replies are cached with a status,
+  count as no signal, and are reported.
+- Replies are parsed strictly: `is_rogue` must be true/false (a quoted "false" is
+  read as false, not as rogue) and `confidence` a number in [0, 1].
+- `--max-cost` caps total spend on this model, counting earlier runs saved in the
+  cache. Calls already in flight when it's hit still finish (at most `--workers`).
+  For a model without a built-in price, pass `--price-in` and `--price-out`, or the
+  run refuses to start.
+- Scores are saved every 20 replies and on Ctrl-C or a crash.
 - Other options: `--model`, `--effort`, `--max-tokens`, `--workers`, `--price-in`,
   `--price-out`, plus the same game options as `run.py`.

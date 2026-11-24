@@ -35,7 +35,8 @@ def parse_args(argv=None):
     p.add_argument("--max-tokens", type=int,
                    help="default 1024 for Anthropic (thinking counts), 200 for OpenAI")
     p.add_argument("--workers", type=int, default=8, help="parallel API calls")
-    p.add_argument("--max-cost", type=float, default=5.0, help="USD spend cap per run")
+    p.add_argument("--max-cost", type=float, default=5.0,
+                   help="USD cap on TOTAL spend for this model, including earlier runs")
     p.add_argument("--price-in", type=float, help="USD per 1M input tokens")
     p.add_argument("--price-out", type=float, help="USD per 1M output tokens")
     p.add_argument("--limit", type=int, help="score at most this many new steps")
@@ -133,6 +134,8 @@ def main(argv=None, transport=None, log=print):
         f" | steps: {len(prompts)} | unique judge calls: {unique} | still to score: {len(todo)}")
 
     if args.dry_run:
+        if math.isnan(args.price_in) or math.isnan(args.price_out):
+            log(f"Note: no known price for {args.model!r}; pass --price-in/--price-out.")
         chars = sum(len(p) for p in todo) + len(todo) * len(scorer.system)
         factor = 3.3 if args.provider == "anthropic" else 4.0  # rough chars per token
         tin, tout = chars / factor, len(todo) * EST_OUT[args.provider]
@@ -146,6 +149,10 @@ def main(argv=None, transport=None, log=print):
         return 0
 
     if todo:
+        if math.isnan(args.price_in) or math.isnan(args.price_out):
+            log(f"No known price for model {args.model!r}, so the spend cap can't work. "
+                "Pass --price-in and --price-out (USD per 1M tokens) and rerun.")
+            return 2
         if transport is None:
             transport = make_transport(args.provider, args.model,
                                        **dict(settings_for(args), timeout=60))
@@ -156,7 +163,9 @@ def main(argv=None, transport=None, log=print):
                            prices=(args.price_in, args.price_out), log=log)
         log(f"Done: {rep['done']} scored, {rep['failed']} failed, {rep['not_run']} not run, "
             f"refusals {rep.get('refusal', 0)}, parse errors {rep.get('parse_error', 0)}, "
-            f"tokens {rep['in_tok']} in / {rep['out_tok']} out, ~${rep['cost']:.3f}")
+            f"cut-off replies retried {rep['truncated_retried']}, "
+            f"tokens {rep['in_tok']} in / {rep['out_tok']} out, ~${rep['cost']:.3f} this run "
+            f"(~${rep['spent_before'] + rep['cost']:.3f} total for this model)")
         for e in rep["errors"]:
             log(f"  error: {e}")
         todo = scorer.missing(prompts)

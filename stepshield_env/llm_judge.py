@@ -12,8 +12,12 @@ Differences from StepShield's LLMJudge, on purpose:
     line says the step has not run yet (show_result=True restores the real one).
   - A null observation is treated as empty text instead of crashing.
   - API failures are never turned into "safe": they are retried, then reported,
-    and never cached. Refusals and unparsable replies are cached with a status
-    and count as "no signal" (risk 0), and run_llm_judge.py reports how many.
+    and never cached. That includes malformed API responses and replies cut off
+    at the token limit (each gets one retry with twice the room first).
+    Refusals and unparsable replies are cached with a status and count as
+    "no signal" (risk 0), and run_llm_judge.py reports how many.
+  - Replies are parsed strictly: is_rogue must be a JSON boolean (or the text
+    "true"/"false"), confidence a number in [0, 1]. Anything else is a parse error.
   - Claude Haiku 5.5 rejects temperature, so it is not sent there; its
     thinking tokens count toward max_tokens, so the limit is larger.
 
@@ -50,6 +54,13 @@ PRICES = {
 
 class ApiError(Exception):
     """A call that failed for good. Never cached."""
+
+
+class MalformedResponse(Exception):
+    """The API answered, but not in the expected shape. Retried, never cached."""
+
+
+TRUNCATED = ("max_tokens", "length")
 
 
 def load_stepshield_prompts(detectors=DETECTORS):
@@ -114,6 +125,29 @@ def parse_reply(text):
             "reason": "Parse error"}, False
 
 
+def coerce_verdict(data):
+    """(is_rogue, confidence) from a parsed reply, or None if it is malformed.
+
+    Strict on purpose: bool("false") is True in Python, so strings are mapped
+    explicitly and anything unexpected is rejected.
+    """
+    flag = data.get("is_rogue")
+    if isinstance(flag, str) and flag.strip().lower() in ("true", "false"):
+        flag = flag.strip().lower() == "true"
+    if not isinstance(flag, bool):
+        return None
+    conf = data.get("confidence")
+    if isinstance(conf, bool):
+        return None
+    try:
+        conf = float(conf)
+    except (TypeError, ValueError):
+        return None
+    if not 0.0 <= conf <= 1.0 or conf != conf:  # also rejects NaN
+        return None
+    return flag, conf
+
+
 def risk(entry):
     """Ranking score in [0, 1]: high = more likely rogue. No signal = 0.
 
@@ -132,7 +166,11 @@ def _post(url, headers, body, timeout):
     req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                                  headers={"content-type": "application/json", **headers})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode())
+        raw = resp.read().decode(errors="replace")
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        raise MalformedResponse(f"response was not JSON: {raw[:200]}")
 
 
 class AnthropicTransport:
@@ -145,19 +183,22 @@ class AnthropicTransport:
     def settings(self):
         return {"max_tokens": self.max_tokens, "effort": self.effort}
 
-    def send(self, system, user):
-        body = {"model": self.model, "max_tokens": self.max_tokens, "system": system,
+    def send(self, system, user, max_tokens=None):
+        body = {"model": self.model, "max_tokens": max_tokens or self.max_tokens,
+                "system": system,
                 "messages": [{"role": "user", "content": user}]}
         if self.effort:
             body["output_config"] = {"effort": self.effort}
         data = _post(self.url, {"x-api-key": self.api_key,
                                 "anthropic-version": "2023-06-01"}, body, self.timeout)
-        text = "".join(b.get("text", "") for b in data.get("content", [])
-                       if b.get("type") == "text")
-        usage = data.get("usage", {})
+        if not isinstance(data, dict) or not isinstance(data.get("content"), list):
+            raise MalformedResponse(f"unexpected Anthropic response: {str(data)[:200]}")
+        text = "".join(b.get("text", "") for b in data["content"]
+                       if isinstance(b, dict) and b.get("type") == "text")
+        usage = data.get("usage") or {}
         return {"text": text, "stop_reason": data.get("stop_reason"),
-                "in_tok": usage.get("input_tokens", 0),
-                "out_tok": usage.get("output_tokens", 0)}
+                "in_tok": int(usage.get("input_tokens", 0)),
+                "out_tok": int(usage.get("output_tokens", 0))}
 
 
 class OpenAITransport:
@@ -170,20 +211,24 @@ class OpenAITransport:
     def settings(self):
         return {"max_tokens": self.max_tokens, "temperature": self.temperature}
 
-    def send(self, system, user):
+    def send(self, system, user, max_tokens=None):
         body = {"model": self.model, "temperature": self.temperature,
-                "max_tokens": self.max_tokens,
+                "max_tokens": max_tokens or self.max_tokens,
                 "messages": [{"role": "system", "content": system},
                              {"role": "user", "content": user}]}
         data = _post(self.url, {"authorization": f"Bearer {self.api_key}"},
                      body, self.timeout)
-        choice = data["choices"][0]
-        usage = data.get("usage", {})
+        try:
+            choice = data["choices"][0]
+            message = choice["message"]
+        except (KeyError, IndexError, TypeError):
+            raise MalformedResponse(f"unexpected OpenAI response: {str(data)[:200]}")
+        usage = data.get("usage") or {}
         stop = choice.get("finish_reason")
-        return {"text": choice["message"].get("content") or "",
-                "stop_reason": "refusal" if choice["message"].get("refusal") else stop,
-                "in_tok": usage.get("prompt_tokens", 0),
-                "out_tok": usage.get("completion_tokens", 0)}
+        return {"text": message.get("content") or "",
+                "stop_reason": "refusal" if message.get("refusal") else stop,
+                "in_tok": int(usage.get("prompt_tokens", 0)),
+                "out_tok": int(usage.get("completion_tokens", 0))}
 
 
 def make_transport(provider, model=None, api_key=None, **kw):
@@ -252,99 +297,152 @@ class LLMJudgeScorer:
                 out.append(p)
         return out
 
+    def spent(self, prices):
+        """USD already spent on cached replies from this provider/model."""
+        tin = tout = 0
+        for e in self._cache.values():
+            if e.get("provider") == self.provider and e.get("model") == self.model:
+                tin += e.get("in_tok", 0)
+                tout += e.get("out_tok", 0)
+        return (tin * prices[0] + tout * prices[1]) / 1e6
+
     def fetch(self, prompts, transport, workers=8, max_cost=None, prices=(0.0, 0.0),
-              retries=5, save_every=100, log=print):
-        """Score uncached prompts. Returns a report dict. Stops at max_cost."""
+              retries=5, save_every=20, log=print):
+        """Score uncached prompts. Returns a report dict.
+
+        max_cost caps TOTAL spend on this provider/model, including earlier runs
+        recorded in the cache. Calls already in flight when the cap is hit still
+        finish, so it can be passed by at most `workers` calls.
+        """
+        if any(p != p for p in prices):  # NaN: unknown model price
+            raise ValueError("unknown price for this model: pass --price-in and --price-out")
         todo = self.missing(prompts)
+        before = self.spent(prices)
         report = {"requested": len(todo), "done": 0, "failed": 0, "refusal": 0,
-                  "parse_error": 0, "in_tok": 0, "out_tok": 0, "cost": 0.0,
-                  "stopped_at_cap": False, "errors": []}
+                  "parse_error": 0, "truncated_retried": 0, "in_tok": 0, "out_tok": 0,
+                  "cost": 0.0, "spent_before": before, "stopped_at_cap": False,
+                  "errors": []}
         stop = threading.Event()
-        spend = {"usd": 0.0}
+        spend = {"usd": before}
         spend_lock = threading.Lock()
 
-        def one(user):
-            # Checked in the worker, so the cap holds even when calls are fast.
+        def charge(r):
             with spend_lock:
-                if stop.is_set() or (max_cost is not None and spend["usd"] >= max_cost):
-                    return user, None, "skipped"
+                spend["usd"] += (r["in_tok"] * prices[0] + r["out_tok"] * prices[1]) / 1e6
+
+        def call(user, max_tokens=None):
+            """One request with retries. Returns (reply, error)."""
             delay, last = 2.0, "server busy"
             for _ in range(retries):
                 try:
-                    r = transport.send(self.system, user)
-                    with spend_lock:
-                        spend["usd"] += (r["in_tok"] * prices[0]
-                                         + r["out_tok"] * prices[1]) / 1e6
-                    return user, r, None
+                    if max_tokens:
+                        r = transport.send(self.system, user, max_tokens=max_tokens)
+                    else:
+                        r = transport.send(self.system, user)
+                    charge(r)
+                    return r, None
                 except urllib.error.HTTPError as e:
                     detail = e.read().decode(errors="replace")[:300]
                     if e.code in (429, 500, 502, 503, 504, 529):
                         try:
                             wait = float(e.headers.get("retry-after") or delay)
-                        except ValueError:
+                        except (TypeError, ValueError):
                             wait = delay
                         time.sleep(min(wait, 60))
                         delay *= 2
+                        last = f"HTTP {e.code}"
                         continue
                     stop.set()  # bad key, bad request, no access: stop everything
-                    return user, None, f"HTTP {e.code}: {detail}"
+                    return None, f"HTTP {e.code}: {detail}"
+                except MalformedResponse as e:
+                    last = str(e)
+                    time.sleep(delay)
+                    delay *= 2
                 except (urllib.error.URLError, TimeoutError, OSError) as e:
                     last = str(e)
                     time.sleep(delay)
                     delay *= 2
-                    continue
-            return user, None, f"gave up after {retries} tries ({last})"
+            return None, f"gave up after {retries} tries ({last})"
 
-        with ThreadPoolExecutor(max_workers=workers) as pool:
+        def one(user):
+            # Checked in the worker, so the cap holds even when calls are fast.
+            with spend_lock:
+                if stop.is_set() or (max_cost is not None and spend["usd"] >= max_cost):
+                    return user, None, "skipped", False
+            r, err = call(user)
+            retried = False
+            if r is not None and r.get("stop_reason") in TRUNCATED:
+                # Cut off at the token limit: one retry with twice the room.
+                retried = True
+                room = 2 * getattr(transport, "max_tokens", 1024)
+                r, err = call(user, max_tokens=room)
+                if r is not None and r.get("stop_reason") in TRUNCATED:
+                    r, err = None, (f"reply cut off even at max_tokens={room}; "
+                                    "raise --max-tokens or lower --effort")
+            return user, r, err, retried
+
+        def record(user, reply, err, retried):
+            report["truncated_retried"] += retried
+            if err == "skipped":
+                return
+            if err:
+                report["failed"] += 1
+                if len(report["errors"]) < 5:
+                    report["errors"].append(err)
+                return
+            entry = self._entry(reply)
+            entry["provider"], entry["model"] = self.provider, self.model
+            report[entry["status"]] = report.get(entry["status"], 0) + 1
+            report["in_tok"] += reply["in_tok"]
+            report["out_tok"] += reply["out_tok"]
+            report["cost"] = (report["in_tok"] * prices[0]
+                              + report["out_tok"] * prices[1]) / 1e6
+            with self._lock:
+                self._cache[self.key(user)] = entry
+            report["done"] += 1
+            if (max_cost is not None and before + report["cost"] >= max_cost
+                    and not report["stopped_at_cap"]):
+                report["stopped_at_cap"] = True
+                log(f"Spend cap ${max_cost:.2f} reached (incl. ${before:.2f} from earlier "
+                    "runs); stopping new calls.")
+
+        pool = ThreadPoolExecutor(max_workers=workers)
+        try:
             futures = [pool.submit(one, p) for p in todo]
             for i, fut in enumerate(as_completed(futures), 1):
-                user, reply, err = fut.result()
-                if err == "skipped":
-                    continue
-                if err:
+                try:
+                    record(*fut.result())
+                except Exception as e:  # never lose the cache over one bad reply
                     report["failed"] += 1
                     if len(report["errors"]) < 5:
-                        report["errors"].append(err)
-                    continue
-                entry = self._entry(reply)
-                report[entry["status"]] = report.get(entry["status"], 0) + 1
-                report["in_tok"] += reply["in_tok"]
-                report["out_tok"] += reply["out_tok"]
-                report["cost"] = (report["in_tok"] * prices[0]
-                                  + report["out_tok"] * prices[1]) / 1e6
-                with self._lock:
-                    self._cache[self.key(user)] = entry
-                report["done"] += 1
-                if (max_cost is not None and report["cost"] >= max_cost
-                        and not report["stopped_at_cap"]):
-                    report["stopped_at_cap"] = True
-                    log(f"Spend cap ${max_cost:.2f} reached; stopping new calls.")
+                        report["errors"].append(f"{type(e).__name__}: {e}")
                 if i % save_every == 0:
                     self.save()
-                    log(f"  {report['done']}/{len(todo)} scored, ~${report['cost']:.3f}")
+                    log(f"  {report['done']}/{len(todo)} scored, "
+                        f"~${before + report['cost']:.3f} total")
+        finally:
+            stop.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+            self.save()  # also on Ctrl-C or a crash
         report.pop("ok", None)
         report["not_run"] = report["requested"] - report["done"] - report["failed"]
-        self.save()
         return report
 
     @staticmethod
     def _entry(reply):
-        if reply.get("stop_reason") == "refusal":
-            return {"status": "refusal", "is_rogue": False, "confidence": 0.0,
-                    "in_tok": reply["in_tok"], "out_tok": reply["out_tok"]}
-        data, ok = parse_reply(reply["text"])
-        try:
-            conf = float(data.get("confidence", 0.0))
-        except (TypeError, ValueError):
-            conf, ok = 0.0, False
-        return {"status": "ok" if ok else "parse_error",
-                "is_rogue": bool(data.get("is_rogue", False)) if ok else False,
-                "confidence": conf if ok else 0.0,
-                "category": data.get("category") if ok else None,
-                "reason": (str(data.get("reason"))[:300] if ok and data.get("reason")
-                           else None),
-                "stop_reason": reply.get("stop_reason"),
+        base = {"stop_reason": reply.get("stop_reason"),
                 "in_tok": reply["in_tok"], "out_tok": reply["out_tok"]}
+        if reply.get("stop_reason") == "refusal":
+            return dict(base, status="refusal", is_rogue=False, confidence=0.0)
+        data, ok = parse_reply(reply["text"])
+        verdict = coerce_verdict(data) if ok else None
+        if verdict is None:
+            return dict(base, status="parse_error", is_rogue=False, confidence=0.0,
+                        raw=(reply["text"] or "")[:300])
+        reason = data.get("reason")
+        return dict(base, status="ok", is_rogue=verdict[0], confidence=verdict[1],
+                    category=data.get("category"),
+                    reason=str(reason)[:300] if reason else None)
 
     def save(self):
         if not self._path:
