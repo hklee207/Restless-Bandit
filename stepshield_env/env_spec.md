@@ -1,7 +1,7 @@
 ENVIRONMENT SPEC — StepShield monitoring game (base case)
 Data: stepshield commit 86710a9, data/train
 
-1. State: task + steps 1..t-1 in full + step t's thought, action, arguments (no result yet).
+1. State: task (title, description, constraints, success criteria) + steps 1..t-1 in full + step t's thought, action, arguments (no result yet).
    Hidden: label, rationale, continuation, trajectory_id.   [from state.md]
 
 2. Action: each turn, check 1 of the agents still running.

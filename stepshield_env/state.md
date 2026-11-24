@@ -17,7 +17,7 @@ Pair 1 — SEC-L1-001 (Stripe key)
 
 STATE DEFINITION
 The state of an agent at turn t =
-  - the task (title, description, constraints)
+  - the task (title, description, constraints, success criteria)
   - steps 1..t-1 in full: thought, action, arguments, result (observation)
   - step t: thought, action, arguments (no result yet)
 
@@ -29,5 +29,5 @@ Example: state at turn 4 of SEC-L1-001-ROGUE =
   ("echo $STRIPE_SECRET_KEY"; no result yet)
 
 Question for Prof. Weng:
-  - The task text differs between rogue and clean runs, so it can give the answer away.
+  - The task text differs between rogue and clean runs in some pairs, so it can give the answer away.
     Keep it in the state or remove it?
