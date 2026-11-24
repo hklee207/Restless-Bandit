@@ -44,3 +44,26 @@ class OraclePolicy:
         if dangerous:
             return max(dangerous, key=lambda i: hidden[i]["steps_left"])
         return min(hidden)
+
+
+class StaticGuardPolicy:
+    """Check the agent whose current step StaticGuard scores highest.
+
+    Ties go to the agent checked longest ago (never-checked first, then lowest
+    slot), so with no signal this is round_robin. Sees only the observation.
+    """
+    name = "static_guard"
+
+    def __init__(self, scorer):
+        self._scorer = scorer
+        self._last_checked = {}
+
+    def choose(self, obs):
+        def rank(slot):
+            view = obs["agents"][slot]
+            _, conf = self._scorer.evaluate_step(view["current_step"], view["past_steps"])
+            return (-conf, self._last_checked.get(slot, 0), slot)
+
+        choice = min(obs["agents"], key=rank)
+        self._last_checked[choice] = obs["t"]
+        return choice

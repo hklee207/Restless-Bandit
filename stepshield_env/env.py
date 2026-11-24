@@ -42,7 +42,12 @@ class _Agent:
 class Game:
     """One game. Policies get observe(); only the oracle may get hidden_state()."""
 
-    def __init__(self, runs):
+    def __init__(self, runs, show_result=False):
+        """show_result also reveals the current step's observation.
+
+        That breaks the spec; use it only for sensitivity checks.
+        """
+        self._current_fields = CURRENT_FIELDS + (("observation",) if show_result else ())
         self._agents = [_Agent(r) for r in runs]
         self.t = 1
         self.total_reward = 0
@@ -63,7 +68,7 @@ class Game:
             agents[i] = {
                 "task": _pick(run.task, TASK_FIELDS),
                 "past_steps": [_pick(s, PAST_FIELDS) for s in run.steps[:self.t - 1]],
-                "current_step": _pick(run.steps[self.t - 1], CURRENT_FIELDS),
+                "current_step": _pick(run.steps[self.t - 1], self._current_fields),
             }
         return {"t": self.t, "agents": agents}
 

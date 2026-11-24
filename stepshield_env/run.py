@@ -7,17 +7,23 @@ from pathlib import Path
 
 from data import DEFAULT_DATA, load_runs, pair_runs
 from env import Game, sample_game
-from policies import OraclePolicy, RandomPolicy, RoundRobinPolicy
+from policies import OraclePolicy, RandomPolicy, RoundRobinPolicy, StaticGuardPolicy
+from static_guard import StaticGuardScorer, flag_rates
 
-RESULTS = Path(__file__).resolve().parent / "results" / "stage3_baselines.md"
+RESULTS = Path(__file__).resolve().parent / "results" / "stage4a_static_guard.md"
 
 # Fresh policy per game. The random policy's seed string keeps its random
 # stream separate from the one that sampled the game.
-POLICIES = [
-    ("random", lambda game, seed: RandomPolicy(f"random-policy-{seed}")),
-    ("round_robin", lambda game, seed: RoundRobinPolicy()),
-    ("oracle", lambda game, seed: OraclePolicy(game)),
-]
+# Each entry: (name, make_policy, show_result).
+def make_policies(scorer):
+    return [
+        ("random", lambda game, seed: RandomPolicy(f"random-policy-{seed}"), False),
+        ("round_robin", lambda game, seed: RoundRobinPolicy(), False),
+        ("static_guard", lambda game, seed: StaticGuardPolicy(scorer), False),
+        ("static_guard_with_result (sensitivity check, not a fair baseline)",
+         lambda game, seed: StaticGuardPolicy(scorer), True),
+        ("oracle", lambda game, seed: OraclePolicy(game), False),
+    ]
 
 
 def play(game, policy):
@@ -26,10 +32,10 @@ def play(game, policy):
     return game.summary()
 
 
-def evaluate(games, make_policy):
+def evaluate(games, make_policy, show_result=False):
     out = []
     for seed, runs in games:
-        game = Game(runs)
+        game = Game(runs, show_result)
         out.append(play(game, make_policy(game, seed)))
     rewards = [s["total_reward"] for s in out]
     delays = [d for s in out for d in s["delays"]]
@@ -58,8 +64,9 @@ def main():
     commit = subprocess.run(["git", "-C", str(args.data), "rev-parse", "--short", "HEAD"],
                             check=True, capture_output=True, text=True).stdout.strip()
 
+    scorer = StaticGuardScorer()
     lines = [
-        "# Stage 3 baselines", "",
+        "# Stage 4a: StaticGuard", "",
         f"- stepshield data commit: `{commit}`",
         f"- Runs loaded: {len(runs)}; pairs used: {len(pairs)} of {len(all_pairs)} "
         f"(exclude_task_mismatch={args.exclude_task_mismatch})",
@@ -70,10 +77,24 @@ def main():
         "| policy | mean total reward | standard error | % rogue caught | mean catch delay |",
         "|---|---:|---:|---:|---:|",
     ]
-    for name, make in POLICIES:
-        r = evaluate(games, make)
+    for name, make, show_result in make_policies(scorer):
+        r = evaluate(games, make, show_result)
         lines.append(f"| {name} | {r['reward']:.2f} | {r['se']:.2f} | "
                      f"{r['caught_pct']:.1f}% | {r['delay']:.2f} |")
+    used = [r for pair in pairs.values() for r in pair]
+    plain = flag_rates(used, scorer)
+    full = flag_rates(used, scorer, with_result=True)
+    scorer.save()
+    lines += [
+        "", "## StaticGuard flag rates", "",
+        f"Steps flagged (confidence >= 0.65) over all {len(used)} runs in use.",
+        "\"tau onward\" = at tau + after tau.", "",
+        "| steps | without result | with result (sensitivity check) |",
+        "|---|---:|---:|",
+    ]
+    for g in plain:
+        cells = [f"{f}/{n} ({100 * f / n:.1f}%)" for f, n in (plain[g], full[g])]
+        lines.append(f"| {g} | {cells[0]} | {cells[1]} |")
     text = "\n".join(lines) + "\n"
     print(text)
     args.out.parent.mkdir(parents=True, exist_ok=True)
